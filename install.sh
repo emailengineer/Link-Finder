@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Link Finder - One Line Installation Script
-# This script automatically installs and sets up the Link Finder application
+# Link Finder - One Line Installation Script (Linux)
+# This script automatically installs and sets up the Link Finder application on Linux
 
 set -e  # Exit on error (but we'll handle some errors manually)
 
-echo "🚀 Link Finder - Installation Script"
-echo "======================================"
+echo "🚀 Link Finder - Installation Script (Linux)"
+echo "============================================="
 echo ""
 
 # Colors for output
@@ -16,98 +16,55 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to detect OS
-detect_os() {
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "macos"
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        echo "linux"
-    else
-        echo "unknown"
-    fi
-}
+# Check if running on Linux
+if [[ "$OSTYPE" != "linux-gnu"* ]]; then
+    echo -e "${RED}❌ This script is designed for Linux only${NC}"
+    exit 1
+fi
 
-# Function to install Node.js on macOS
-install_node_macos() {
-    echo -e "${BLUE}📥 Installing Node.js 18+ on macOS...${NC}"
-    
-    # Try Homebrew first
-    if command -v brew &> /dev/null; then
-        echo -e "${BLUE}Using Homebrew to install Node.js...${NC}"
-        brew install node@18 || brew install node
-        # Add to PATH if needed
-        if [ -f "/opt/homebrew/bin/node" ]; then
-            export PATH="/opt/homebrew/bin:$PATH"
-        elif [ -f "/usr/local/bin/node" ]; then
-            export PATH="/usr/local/bin:$PATH"
-        fi
-        return 0
-    fi
-    
-    # Try nvm if available
-    if [ -s "$HOME/.nvm/nvm.sh" ]; then
-        echo -e "${BLUE}Using nvm to install Node.js...${NC}"
-        source "$HOME/.nvm/nvm.sh"
-        nvm install 18
-        nvm use 18
-        return 0
-    fi
-    
-    # Fallback: Install Homebrew and then Node.js
-    echo -e "${YELLOW}Homebrew not found. Installing Homebrew first...${NC}"
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    
-    if command -v brew &> /dev/null; then
-        brew install node@18 || brew install node
-        # Add to PATH
-        if [ -f "/opt/homebrew/bin/node" ]; then
-            export PATH="/opt/homebrew/bin:$PATH"
-        elif [ -f "/usr/local/bin/node" ]; then
-            export PATH="/usr/local/bin:$PATH"
-        fi
-        return 0
-    fi
-    
-    return 1
-}
-
-# Function to install Node.js on Linux
+# Function to install Node.js on Linux using nvm
 install_node_linux() {
     echo -e "${BLUE}📥 Installing Node.js 18+ on Linux...${NC}"
     
-    # Detect Linux distribution
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        DISTRO=$ID
-    else
-        DISTRO="unknown"
-    fi
-    
     # Try nvm first (works on all Linux distros)
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
-        echo -e "${BLUE}Using nvm to install Node.js...${NC}"
+        echo -e "${BLUE}Using existing nvm installation...${NC}"
         source "$HOME/.nvm/nvm.sh"
         nvm install 18
         nvm use 18
+        nvm alias default 18
         return 0
     fi
     
     # Install nvm if not present
     echo -e "${BLUE}Installing nvm (Node Version Manager)...${NC}"
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+    
+    # Load nvm
     export NVM_DIR="$HOME/.nvm"
     [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
     [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
     
+    # Install Node.js 18
     nvm install 18
     nvm use 18
     nvm alias default 18
+    
+    # Add nvm to shell profile for persistence
+    if [ -f "$HOME/.bashrc" ]; then
+        if ! grep -q "NVM_DIR" "$HOME/.bashrc"; then
+            echo '' >> "$HOME/.bashrc"
+            echo '# NVM Configuration' >> "$HOME/.bashrc"
+            echo 'export NVM_DIR="$HOME/.nvm"' >> "$HOME/.bashrc"
+            echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> "$HOME/.bashrc"
+            echo '[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"' >> "$HOME/.bashrc"
+        fi
+    fi
     
     return 0
 }
 
 # Check and install Node.js
-OS=$(detect_os)
 NODE_INSTALLED=false
 NODE_VERSION_OK=false
 
@@ -129,44 +86,23 @@ if [ "$NODE_INSTALLED" = false ] || [ "$NODE_VERSION_OK" = false ]; then
     echo ""
     echo -e "${BLUE}Attempting to automatically install Node.js 18+...${NC}"
     
-    if [ "$OS" = "macos" ]; then
-        set +e  # Temporarily disable exit on error
-        install_node_macos
-        INSTALL_RESULT=$?
-        set -e  # Re-enable exit on error
-        
-        if [ $INSTALL_RESULT -eq 0 ]; then
-            # Reload shell to get new PATH
-            if command -v node &> /dev/null; then
-                NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
-                if [ "$NODE_VERSION" -ge 18 ]; then
-                    echo -e "${GREEN}✓ Node.js installed successfully: $(node -v)${NC}"
-                    NODE_VERSION_OK=true
-                fi
+    set +e  # Temporarily disable exit on error
+    install_node_linux
+    INSTALL_RESULT=$?
+    set -e  # Re-enable exit on error
+    
+    if [ $INSTALL_RESULT -eq 0 ]; then
+        # Reload shell to get new PATH
+        if [ -s "$HOME/.nvm/nvm.sh" ]; then
+            source "$HOME/.nvm/nvm.sh"
+        fi
+        if command -v node &> /dev/null; then
+            NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
+            if [ "$NODE_VERSION" -ge 18 ]; then
+                echo -e "${GREEN}✓ Node.js installed successfully: $(node -v)${NC}"
+                NODE_VERSION_OK=true
             fi
         fi
-    elif [ "$OS" = "linux" ]; then
-        set +e  # Temporarily disable exit on error
-        install_node_linux
-        INSTALL_RESULT=$?
-        set -e  # Re-enable exit on error
-        
-        if [ $INSTALL_RESULT -eq 0 ]; then
-            # Reload shell to get new PATH
-            if [ -s "$HOME/.nvm/nvm.sh" ]; then
-                source "$HOME/.nvm/nvm.sh"
-            fi
-            if command -v node &> /dev/null; then
-                NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
-                if [ "$NODE_VERSION" -ge 18 ]; then
-                    echo -e "${GREEN}✓ Node.js installed successfully: $(node -v)${NC}"
-                    NODE_VERSION_OK=true
-                fi
-            fi
-        fi
-    else
-        echo -e "${RED}❌ Unsupported operating system: $OS${NC}"
-        echo "Please install Node.js 18+ manually from https://nodejs.org/"
     fi
     
     # Final check
@@ -174,8 +110,8 @@ if [ "$NODE_INSTALLED" = false ] || [ "$NODE_VERSION_OK" = false ]; then
         echo ""
         echo -e "${RED}❌ Could not automatically install Node.js 18+${NC}"
         echo "Please install Node.js 18+ manually:"
-        echo "  - macOS: brew install node@18"
-        echo "  - Linux: Use nvm (https://github.com/nvm-sh/nvm)"
+        echo "  - Install nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
+        echo "  - Then: nvm install 18 && nvm use 18"
         echo "  - Or download from: https://nodejs.org/"
         echo ""
         echo "After installing, please run this script again."
@@ -223,4 +159,3 @@ echo ""
 echo -e "${BLUE}💡 Tip: If Node.js was just installed, you may need to${NC}"
 echo -e "${BLUE}   restart your terminal or run: source ~/.bashrc${NC}"
 echo ""
-
