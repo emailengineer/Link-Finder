@@ -1,0 +1,24 @@
+{
+  "name": "link-finder",
+  "version": "1.0.0",
+  "description": "A web crawler that finds all links on a website with depth-2 crawling",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": ["crawler", "links", "scraper"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "puppeteer": "^21.5.0",
+    "axios": "^1.6.2",
+    "robots-parser": "^3.0.0",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
+
