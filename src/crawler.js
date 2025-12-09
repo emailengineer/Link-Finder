@@ -59,24 +59,45 @@ class WebsiteCrawler {
 
   normalizeLink(href, baseUrl) {
     try {
-      // Handle relative URLs
-      if (href.startsWith('//')) {
-        href = 'https:' + href;
-      } else if (href.startsWith('/')) {
-        const base = new URL(baseUrl);
-        href = base.origin + href;
-      } else if (!href.startsWith('http://') && !href.startsWith('https://')) {
-        const base = new URL(baseUrl);
-        href = new URL(href, base).href;
+      // Skip invalid link types
+      if (!href || 
+          href.trim() === '' || 
+          href.startsWith('javascript:') || 
+          href.startsWith('mailto:') || 
+          href.startsWith('tel:') ||
+          href.startsWith('data:') ||
+          href.startsWith('#') ||
+          href.trim() === '#') {
+        return null;
       }
 
-      const url = new URL(href);
+      // Use URL constructor to properly resolve relative URLs
+      const base = new URL(baseUrl);
+      let resolvedUrl;
       
+      try {
+        // This will automatically resolve relative URLs against the base URL
+        resolvedUrl = new URL(href, base);
+      } catch (error) {
+        // If URL constructor fails, try manual resolution
+        if (href.startsWith('//')) {
+          resolvedUrl = new URL('https:' + href);
+        } else if (href.startsWith('/')) {
+          resolvedUrl = new URL(href, base.origin);
+        } else {
+          // Relative path
+          resolvedUrl = new URL(href, base);
+        }
+      }
+
       // Remove fragments
-      url.hash = '';
+      resolvedUrl.hash = '';
       
-      // Remove trailing slash for consistency
-      let normalized = url.href.replace(/\/$/, '');
+      // Remove trailing slash for consistency (except for root)
+      let normalized = resolvedUrl.href;
+      if (normalized.endsWith('/') && normalized !== resolvedUrl.origin + '/') {
+        normalized = normalized.slice(0, -1);
+      }
       
       return normalized;
     } catch (error) {
@@ -173,24 +194,88 @@ class WebsiteCrawler {
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 LinkFinderBot/1.0');
 
       try {
-        await page.goto(normalizedUrl, {
+        const response = await page.goto(normalizedUrl, {
           waitUntil: 'networkidle2',
           timeout: 30000
         });
 
-        // Wait for any dynamic content
+        // Wait for any dynamic content to load
         await page.waitForTimeout(2000);
+        
+        // Wait for any lazy-loaded content
+        try {
+          await page.evaluate(() => {
+            return new Promise((resolve) => {
+              if (document.readyState === 'complete') {
+                resolve();
+              } else {
+                window.addEventListener('load', resolve);
+                setTimeout(resolve, 1000);
+              }
+            });
+          });
+        } catch (e) {
+          // Ignore timeout errors
+        }
 
-        // Extract all links
-        const links = await page.evaluate(() => {
+        // Get the current page URL (after any redirects)
+        const currentPageUrl = page.url();
+        
+        // Update normalizedUrl if there was a redirect
+        if (currentPageUrl !== normalizedUrl) {
+          const redirectedNormalized = this.normalizeLink(currentPageUrl, this.baseUrl);
+          if (redirectedNormalized && this.isSameDomain(redirectedNormalized)) {
+            normalizedUrl = redirectedNormalized;
+            this.allLinks.add(normalizedUrl);
+          }
+        }
+
+        // Extract all links using browser's native URL resolution
+        const links = await page.evaluate((baseUrl) => {
           const links = new Set();
+          const base = new URL(baseUrl);
+          
+          // Helper function to resolve and add link
+          const addLink = (href) => {
+            if (!href || typeof href !== 'string') return;
+            
+            href = href.trim();
+            
+            // Skip invalid link types
+            if (href === '' || 
+                href.startsWith('javascript:') || 
+                href.startsWith('mailto:') || 
+                href.startsWith('tel:') ||
+                href.startsWith('data:') ||
+                href === '#' ||
+                (href.startsWith('#') && href.length === 1)) {
+              return;
+            }
+            
+            try {
+              // Use browser's URL API to resolve relative URLs
+              const resolvedUrl = new URL(href, base);
+              // Remove fragments
+              resolvedUrl.hash = '';
+              // Get full URL string
+              let fullUrl = resolvedUrl.href;
+              // Remove trailing slash (except root)
+              if (fullUrl.endsWith('/') && fullUrl !== resolvedUrl.origin + '/') {
+                fullUrl = fullUrl.slice(0, -1);
+              }
+              links.add(fullUrl);
+            } catch (error) {
+              // Skip invalid URLs
+              console.log('Invalid URL:', href);
+            }
+          };
           
           // Standard anchor tags
           const anchors = Array.from(document.querySelectorAll('a[href]'));
           anchors.forEach(anchor => {
             const href = anchor.getAttribute('href');
-            if (href && href.trim()) {
-              links.add(href.trim());
+            if (href) {
+              addLink(href);
             }
           });
 
@@ -201,8 +286,8 @@ class WebsiteCrawler {
                         el.getAttribute('data-url') || 
                         el.getAttribute('data-link') ||
                         el.getAttribute('data-path');
-            if (href && href.trim()) {
-              links.add(href.trim());
+            if (href) {
+              addLink(href);
             }
           });
 
@@ -210,17 +295,21 @@ class WebsiteCrawler {
           const forms = Array.from(document.querySelectorAll('form[action]'));
           forms.forEach(form => {
             const action = form.getAttribute('action');
-            if (action && action.trim()) {
-              links.add(action.trim());
+            if (action) {
+              addLink(action);
             }
           });
 
-          // Link tags (CSS, canonical, etc.)
+          // Link tags (canonical, alternate, etc. - but skip stylesheets)
           const linkTags = Array.from(document.querySelectorAll('link[href]'));
           linkTags.forEach(link => {
-            const href = link.getAttribute('href');
-            if (href && href.trim()) {
-              links.add(href.trim());
+            const rel = link.getAttribute('rel');
+            // Only include links that are likely to be page URLs
+            if (rel && (rel.includes('canonical') || rel.includes('alternate') || rel.includes('next') || rel.includes('prev'))) {
+              const href = link.getAttribute('href');
+              if (href) {
+                addLink(href);
+              }
             }
           });
 
@@ -229,22 +318,63 @@ class WebsiteCrawler {
           if (metaRefresh && metaRefresh.content) {
             const match = metaRefresh.content.match(/url=(.+)/i);
             if (match && match[1]) {
-              links.add(match[1].trim());
+              addLink(match[1].trim());
+            }
+          }
+
+          // Area tags (image maps)
+          const areas = Array.from(document.querySelectorAll('area[href]'));
+          areas.forEach(area => {
+            const href = area.getAttribute('href');
+            if (href) {
+              addLink(href);
+            }
+          });
+
+          // Iframe src attributes
+          const iframes = Array.from(document.querySelectorAll('iframe[src]'));
+          iframes.forEach(iframe => {
+            const src = iframe.getAttribute('src');
+            if (src && !src.startsWith('javascript:') && !src.startsWith('data:')) {
+              addLink(src);
+            }
+          });
+
+          // Also check for base tag
+          const baseTag = document.querySelector('base[href]');
+          if (baseTag) {
+            const baseHref = baseTag.getAttribute('href');
+            if (baseHref) {
+              addLink(baseHref);
             }
           }
 
           return Array.from(links);
-        });
+        }, currentPageUrl);
+        
+        console.log(`Found ${links.length} links on ${normalizedUrl}`);
 
-        // Process found links
+        // Process found links (they should already be fully qualified URLs from page.evaluate)
         for (const link of links) {
-          const normalizedLink = this.normalizeLink(link, normalizedUrl);
+          // Double-check normalization (links should already be absolute from browser)
+          const normalizedLink = this.normalizeLink(link, normalizedUrl) || link;
+          
           if (normalizedLink && this.isValidUrl(normalizedLink) && this.isSameDomain(normalizedLink)) {
-            this.allLinks.add(normalizedLink);
-            
-            // Crawl deeper if within depth limit
-            if (depth < this.maxDepth) {
-              await this.crawlPage(normalizedLink, depth + 1);
+            // Ensure it's a full URL with domain
+            try {
+              const urlObj = new URL(normalizedLink);
+              // Only add http/https URLs
+              if (urlObj.protocol === 'http:' || urlObj.protocol === 'https:') {
+                this.allLinks.add(normalizedLink);
+                
+                // Crawl deeper if within depth limit
+                if (depth < this.maxDepth) {
+                  await this.crawlPage(normalizedLink, depth + 1);
+                }
+              }
+            } catch (error) {
+              // Skip invalid URLs
+              console.log(`Skipping invalid URL: ${normalizedLink}`);
             }
           }
         }
