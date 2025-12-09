@@ -23,16 +23,22 @@ A powerful web crawler that finds all links on a website with depth-2 crawling. 
 
 ### One-Line Installation (Recommended)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/emailengineer/Link-Finder/main/install.sh | bash
-```
-
-Or download and run:
+Clone the repository and run the installation script:
 
 ```bash
-chmod +x install.sh
-./install.sh
+git clone git@github.com:emailengineer/Link-Finder.git && cd Link-Finder && chmod +x install.sh && ./install.sh
 ```
+
+Or if you already have the repository:
+
+```bash
+chmod +x install.sh && ./install.sh
+```
+
+The script will automatically:
+- Check for Node.js installation
+- Install all npm dependencies
+- Set up the project for use
 
 ### Local Development
 
